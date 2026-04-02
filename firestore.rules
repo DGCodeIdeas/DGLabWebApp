@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uuid: string (required)
+    //   - email: string (required, email format)
+    //   - username: string (optional)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - status: string (required, ['active', 'pending', 'suspended'])
+    //   - mfaEnabled: bool (optional)
+    //   - role: string (required, ['admin', 'user'])
+    //
+    // Collection: tenants
+    // Document ID: {tenantId}
+    // Fields:
+    //   - identifier: string (required)
+    //   - domain: string (optional)
+    //   - status: string (required, ['active', 'inactive'])
+    //   - config: map (optional)
+    //
+    // Collection: jobs
+    // Document ID: {jobId}
+    // Fields:
+    //   - serviceId: string (required)
+    //   - status: string (required, ['pending', 'processing', 'completed', 'failed', 'cancelled'])
+    //   - progress: int (required, 0-100)
+    //   - message: string (optional)
+    //   - inputData: map (optional)
+    //   - outputData: map (optional)
+    //   - userId: string (required)
+    //   - createdAt: timestamp (required)
+    //   - completedAt: timestamp (optional)
+    //
+    // Collection: audit_logs
+    // Document ID: {logId}
+    // Fields:
+    //   - userId: string (optional)
+    //   - category: string (required)
+    //   - eventType: string (required)
+    //   - identifier: string (optional)
+    //   - statusCode: int (optional)
+    //   - metadata: map (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "opensc306@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Domain Validators
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uuid', 'email', 'status', 'role']) &&
+             data.uuid is string && data.uuid.size() > 0 && data.uuid.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.status in ['active', 'pending', 'suspended'] &&
+             data.role in ['admin', 'user'] &&
+             (!('username' in data) || (data.username is string && data.username.size() < 100)) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 500)) &&
+             (!('mfaEnabled' in data) || data.mfaEnabled is bool);
+    }
+
+    function isValidTenant(data) {
+      return hasRequiredFields(['identifier', 'status']) &&
+             data.identifier is string && data.identifier.size() > 0 && data.identifier.size() < 100 &&
+             data.status in ['active', 'inactive'] &&
+             (!('domain' in data) || (data.domain is string && data.domain.size() < 255)) &&
+             (!('config' in data) || data.config is map);
+    }
+
+    function isValidJob(data) {
+      return hasRequiredFields(['serviceId', 'status', 'progress', 'userId', 'createdAt']) &&
+             data.serviceId is string && data.serviceId.size() > 0 && data.serviceId.size() < 100 &&
+             data.status in ['pending', 'processing', 'completed', 'failed', 'cancelled'] &&
+             data.progress is int && data.progress >= 0 && data.progress <= 100 &&
+             data.userId is string && data.userId.size() < 100 &&
+             data.createdAt is timestamp &&
+             (!('message' in data) || (data.message is string && data.message.size() < 1000)) &&
+             (!('inputData' in data) || (data.inputData is map && data.inputData.size() < 50)) &&
+             (!('outputData' in data) || (data.outputData is map && data.outputData.size() < 50)) &&
+             (!('completedAt' in data) || data.completedAt is timestamp);
+    }
+
+    function isValidAuditLog(data) {
+      return hasRequiredFields(['category', 'eventType', 'createdAt']) &&
+             data.category is string && data.category.size() > 0 && data.category.size() < 100 &&
+             data.eventType is string && data.eventType.size() > 0 && data.eventType.size() < 100 &&
+             data.createdAt is timestamp &&
+             (!('userId' in data) || (data.userId is string && data.userId.size() < 100)) &&
+             (!('identifier' in data) || (data.identifier is string && data.identifier.size() < 255)) &&
+             (!('statusCode' in data) || data.statusCode is int) &&
+             (!('metadata' in data) || (data.metadata is map && data.metadata.size() < 50));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                      ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                      ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && isValidTenant(request.resource.data);
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidJob(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && isValidJob(request.resource.data) && 
+                      (resource.data.userId == request.auth.uid || isAdmin()) &&
+                      request.resource.data.userId == resource.data.userId &&
+                      request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidAuditLog(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
