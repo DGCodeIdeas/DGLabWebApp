@@ -1,10 +1,13 @@
 import React, { useState, useCallback } from 'react';
-import { BookOpen, Send, Sparkles, Loader2, CheckCircle2, AlertCircle, Download, FileJson, FileText, Settings, Cpu, Layers, Terminal } from 'lucide-react';
+import { BookOpen, Send, Sparkles, Loader2, CheckCircle2, AlertCircle, Download, FileJson, FileText, Settings, Cpu, Layers, Terminal, LogIn, LogOut, Replace, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateMangaScript } from '../services/geminiService';
 import Console, { LogEntry } from '../components/ui/Console';
+import { useFirebase } from '../components/FirebaseProvider';
+import { auth, googleProvider, signInWithPopup, signOut } from '../firebase';
 
 export default function MangaScript() {
+  const { user, loading } = useFirebase();
   const [title, setTitle] = useState('New Manga Project');
   const [sourceMaterial, setSourceMaterial] = useState('');
   const [category, setCategory] = useState('A');
@@ -15,6 +18,16 @@ export default function MangaScript() {
   const [generatedScript, setGeneratedScript] = useState<string | null>(null);
   const [routingInfo, setRoutingInfo] = useState<any>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  
+  // Find and Replace state
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [useRegex, setUseRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [showFindReplace, setShowFindReplace] = useState(false);
+
+  const [matchCount, setMatchCount] = useState<number | null>(null);
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
     const timestamp = new Date().toLocaleTimeString([], { hour12: false });
@@ -22,8 +35,104 @@ export default function MangaScript() {
     setLogs(prev => [...prev, { id, timestamp, message, type }]);
   }, []);
 
+  const handleSignIn = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Sign in failed:", error);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Sign out failed:", error);
+    }
+  };
+
+  const getSearchRegex = () => {
+    let flags = 'g';
+    if (!caseSensitive) flags += 'i';
+    
+    let searchPattern = findText;
+    if (!useRegex) {
+      searchPattern = searchPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    
+    if (wholeWord) {
+      searchPattern = `\\b${searchPattern}\\b`;
+    }
+
+    return new RegExp(searchPattern, flags);
+  };
+
+  const handleFindAll = () => {
+    if (!generatedScript || !findText) {
+      setMatchCount(0);
+      return;
+    }
+    try {
+      const regex = getSearchRegex();
+      const matches = [...generatedScript.matchAll(regex)];
+      setMatchCount(matches.length);
+      addLog(`Found ${matches.length} occurrences of "${findText}"`, 'info');
+    } catch (e) {
+      addLog(`Find failed: ${e instanceof Error ? e.message : 'Invalid pattern'}`, 'error');
+    }
+  };
+
+  const handleReplaceAll = () => {
+    if (!generatedScript || !findText) return;
+    try {
+      const regex = getSearchRegex();
+      const matches = [...generatedScript.matchAll(regex)];
+      const newScript = generatedScript.replace(regex, replaceText);
+      setGeneratedScript(newScript);
+      setMatchCount(null);
+      addLog(`Replaced ${matches.length} occurrences of "${findText}" -> "${replaceText}"`, 'warning');
+    } catch (e) {
+      addLog(`Replace failed: ${e instanceof Error ? e.message : 'Invalid pattern'}`, 'error');
+    }
+  };
+
+  const renderHighlightedScript = () => {
+    if (!generatedScript) return null;
+    if (!showFindReplace || !findText) return generatedScript;
+
+    try {
+      const regex = getSearchRegex();
+      const elements: React.ReactNode[] = [];
+      let lastIndex = 0;
+      let match;
+      
+      if (findText === '') return generatedScript;
+      regex.lastIndex = 0;
+      
+      while ((match = regex.exec(generatedScript)) !== null) {
+        if (match.index > lastIndex) {
+          elements.push(generatedScript.substring(lastIndex, match.index));
+        }
+        elements.push(<mark key={match.index} className="bg-purple-500/50 text-white rounded px-0.5">{match[0]}</mark>);
+        lastIndex = match.index + match[0].length;
+        
+        if (match[0].length === 0) {
+          regex.lastIndex++;
+        }
+      }
+      
+      if (lastIndex < generatedScript.length) {
+        elements.push(generatedScript.substring(lastIndex));
+      }
+      
+      return elements;
+    } catch (e) {
+      return generatedScript;
+    }
+  };
+
   const handleGenerate = async () => {
-    if (!sourceMaterial) return;
+    if (!sourceMaterial || !user) return;
     
     setStatus('processing');
     setProgress(10);
@@ -32,6 +141,7 @@ export default function MangaScript() {
     setJobId(currentJobId);
     
     addLog(`Initializing MangaScript Studio Workspace...`, 'system');
+    addLog(`User authenticated: ${user.email}`, 'info');
     addLog(`Job ID assigned: ${currentJobId}`, 'info');
     addLog(`Source material detected: ${sourceMaterial.length} characters`, 'info');
     
@@ -98,6 +208,41 @@ export default function MangaScript() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="bg-gray-900 text-white min-h-screen flex items-center justify-center">
+        <Loader2 className="animate-spin text-purple-500" size={48} />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-gray-800 rounded-3xl p-8 border border-gray-700 text-center shadow-2xl"
+        >
+          <div className="bg-purple-600 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-purple-500/20">
+            <BookOpen size={40} />
+          </div>
+          <h2 className="text-3xl font-bold mb-4">MangaScript Studio</h2>
+          <p className="text-gray-400 mb-8 leading-relaxed">
+            Unlock the power of AI-driven manga script generation. Sign in with your Google account to access the workspace.
+          </p>
+          <button 
+            onClick={handleSignIn}
+            className="w-full py-4 bg-white text-gray-900 font-bold rounded-2xl flex items-center justify-center space-x-3 hover:bg-gray-100 transition-all transform active:scale-95 shadow-xl"
+          >
+            <LogIn size={20} />
+            <span>Sign in with Google</span>
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-gray-900 text-white min-h-screen flex flex-col">
       {/* Workspace Header */}
@@ -116,7 +261,26 @@ export default function MangaScript() {
           </div>
         </div>
         <div className="flex items-center space-x-3">
-          <button className="p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400" title="Settings">
+          <div className="hidden sm:flex items-center space-x-3 mr-4 border-r border-gray-700 pr-4">
+            <img 
+              src={user.photoURL || ''} 
+              alt="" 
+              className="w-8 h-8 rounded-full border border-gray-600"
+              referrerPolicy="no-referrer"
+            />
+            <div className="text-right">
+              <div className="text-[10px] font-bold truncate max-w-[100px] text-gray-300">{user.displayName}</div>
+              <div className="text-[8px] text-gray-500 truncate max-w-[100px]">{user.email}</div>
+            </div>
+          </div>
+          <button 
+            onClick={handleSignOut}
+            className="p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+            title="Sign Out"
+          >
+            <LogOut size={20} />
+          </button>
+          <button className="p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-white" title="Settings">
             <Settings size={20} />
           </button>
           <div className="h-6 w-px bg-gray-700 mx-2"></div>
@@ -281,6 +445,13 @@ export default function MangaScript() {
                     <span className="text-[10px] bg-gray-800 px-2 py-1 rounded border border-gray-700 text-gray-400 font-mono uppercase">
                       {routingInfo?.model.id}
                     </span>
+                    <button 
+                      onClick={() => setShowFindReplace(!showFindReplace)}
+                      className={`p-2 rounded-lg transition-all ${showFindReplace ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+                      title="Find and Replace"
+                    >
+                      <Replace size={18} />
+                    </button>
                     <button className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300" title="Download PDF">
                       <FileText size={18} />
                     </button>
@@ -290,8 +461,96 @@ export default function MangaScript() {
                   </div>
                 </div>
 
+                <AnimatePresence>
+                  {showFindReplace && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3 overflow-hidden shadow-xl"
+                    >
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase">Find</label>
+                          <div className="relative">
+                            <input 
+                              type="text" 
+                              value={findText}
+                              onChange={(e) => setFindText(e.target.value)}
+                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-purple-500 outline-none"
+                              placeholder="Text to find..."
+                            />
+                            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase">Replace</label>
+                          <input 
+                            type="text" 
+                            value={replaceText}
+                            onChange={(e) => setReplaceText(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-purple-500 outline-none"
+                            placeholder="Replacement..."
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-4 pt-1">
+                        <label className="flex items-center space-x-2 cursor-pointer group">
+                          <input 
+                            type="checkbox" 
+                            checked={useRegex} 
+                            onChange={(e) => setUseRegex(e.target.checked)}
+                            className="w-3 h-3 text-purple-600 border-gray-700 rounded bg-gray-800 focus:ring-purple-500"
+                          />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase group-hover:text-purple-400 transition-colors">Regex</span>
+                        </label>
+                        <label className="flex items-center space-x-2 cursor-pointer group">
+                          <input 
+                            type="checkbox" 
+                            checked={caseSensitive} 
+                            onChange={(e) => setCaseSensitive(e.target.checked)}
+                            className="w-3 h-3 text-purple-600 border-gray-700 rounded bg-gray-800 focus:ring-purple-500"
+                          />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase group-hover:text-purple-400 transition-colors">Case</span>
+                        </label>
+                        <label className="flex items-center space-x-2 cursor-pointer group">
+                          <input 
+                            type="checkbox" 
+                            checked={wholeWord} 
+                            onChange={(e) => setWholeWord(e.target.checked)}
+                            className="w-3 h-3 text-purple-600 border-gray-700 rounded bg-gray-800 focus:ring-purple-500"
+                          />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase group-hover:text-purple-400 transition-colors">Word</span>
+                        </label>
+                      </div>
+                      
+                      {matchCount !== null && (
+                        <div className="text-[10px] font-mono text-purple-400">
+                          {matchCount} match{matchCount !== 1 ? 'es' : ''} found
+                        </div>
+                      )}
+
+                      <div className="flex space-x-3 pt-2">
+                        <button 
+                          onClick={handleFindAll}
+                          className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-lg transition-all border border-gray-700"
+                        >
+                          Find All
+                        </button>
+                        <button 
+                          onClick={handleReplaceAll}
+                          className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition-all shadow-lg shadow-purple-500/20"
+                        >
+                          Replace All
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <div className="bg-gray-900 rounded-2xl p-8 border border-gray-800 font-mono text-sm text-gray-300 shadow-2xl flex-grow overflow-y-auto custom-scrollbar whitespace-pre-wrap leading-relaxed">
-                  {generatedScript}
+                  {renderHighlightedScript()}
                 </div>
 
                 <div className="h-48 flex-shrink-0">

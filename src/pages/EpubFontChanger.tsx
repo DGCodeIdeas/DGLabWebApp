@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { Type, Upload, FileText, Trash2, Wand2, Download, AlertTriangle, CheckCircle2, Search, Info, Settings, Zap, Terminal } from 'lucide-react';
+import { Type, Upload, FileText, Trash2, Wand2, Download, AlertTriangle, CheckCircle2, Search, Info, Settings, Zap, Terminal, Replace } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Console, { LogEntry } from '../components/ui/Console';
 
 const fonts = [
+  { id: 'original', name: 'Keep Original Font', description: 'Do not change the font, only apply text replacements.' },
   { id: 'merriweather', name: 'Merriweather', description: 'Elegant serif font for screens.' },
   { id: 'opendyslexic', name: 'OpenDyslexic', description: 'Designed to increase readability for dyslexia.' },
   { id: 'fira-sans', name: 'Fira Sans', description: 'Modern sans-serif with excellent legibility.' },
@@ -11,16 +12,28 @@ const fonts = [
   { id: 'lato', name: 'Lato', description: 'A friendly and balanced sans-serif typeface.' },
   { id: 'montserrat', name: 'Montserrat', description: 'Geometric sans-serif with wide utility.' },
   { id: 'playfair', name: 'Playfair Display', description: 'High-contrast serif, great for headings.' },
+  { id: 'Open Sans', name: 'Open Sans', description: 'Classic Google sans-serif.' },
+  { id: 'Roboto Mono', name: 'Roboto Mono', description: 'Clean monospace font.' },
+  { id: 'Ubuntu', name: 'Ubuntu', description: 'Modern and distinctive sans-serif.' },
+  { id: 'Poppins', name: 'Poppins', description: 'Geometric sans-serif with a friendly feel.' },
 ];
 
 export default function EpubFontChanger() {
   const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
-  const [selectedFile, setSelectedFile] = useState<{ name: string; size: number; raw?: File } | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<{ name: string; size: number; raw?: File }[]>([]);
   const [selectedFont, setSelectedFont] = useState("merriweather");
+  const [customFont, setCustomFont] = useState("");
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
   const [fontSearch, setFontSearch] = useState("");
-  const [result, setResult] = useState<{ downloadUrl: string; filename: string; modifiedCount?: number } | null>(null);
+  const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [results, setResults] = useState<{ originalName: string; downloadUrl: string; filename: string; modifiedCount?: number; textReplacedCount?: number; offlineSupport?: boolean }[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
@@ -37,84 +50,178 @@ export default function EpubFontChanger() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const file = files[0];
-      setSelectedFile({
+      const newFiles = Array.from(files).map((file: File) => ({
         name: file.name,
         size: file.size,
         raw: file
-      });
+      }));
+      setSelectedFiles(prev => [...prev, ...newFiles]);
       setStatus('idle');
       setLogs([]);
+      setMatchCount(null);
+      setResults([]);
+    }
+  };
+
+  const handleFindAll = async () => {
+    if (selectedFiles.length === 0 || !findText) return;
+
+    setIsSearching(true);
+    setMatchCount(null);
+    addLog(`Searching ${selectedFiles.length} EPUB(s) for "${findText}"...`, 'info');
+
+    try {
+      let totalMatchCount = 0;
+      for (const fileObj of selectedFiles) {
+        if (!fileObj.raw) continue;
+        const formData = new FormData();
+        formData.append('file', fileObj.raw);
+        formData.append('findText', findText);
+        formData.append('useRegex', String(useRegex));
+        formData.append('caseSensitive', String(caseSensitive));
+        formData.append('wholeWord', String(wholeWord));
+
+        const response = await fetch('/api/epub/search', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) throw new Error(`Search failed for ${fileObj.name}`);
+
+        const data = await response.json();
+        totalMatchCount += data.matchCount;
+      }
+      setMatchCount(totalMatchCount);
+      addLog(`Found ${totalMatchCount} occurrences across all selected EPUBs.`, 'success');
+    } catch (error) {
+      addLog(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    } finally {
+      setIsSearching(false);
     }
   };
 
   const handleSubmit = async () => {
-    if (!selectedFile || !selectedFile.raw) return;
+    if (selectedFiles.length === 0) return;
 
     setStatus('processing');
-    setProgress(10);
+    setProgress(0);
     setLogs([]);
+    setResults([]);
 
-    addLog(`Initializing EPUB Transformation Engine...`, 'system');
-    addLog(`Target File: ${selectedFile.name} (${(selectedFile.size / 1024).toFixed(2)} KB)`, 'info');
-    addLog(`Selected Font: ${selectedFont}`, 'info');
+    const finalFont = customFont || selectedFont;
 
-    try {
-      addLog(`Preparing multipart/form-data payload...`, 'info');
-      const formData = new FormData();
-      formData.append('file', selectedFile.raw);
-      formData.append('font', selectedFont);
+    addLog(`Initializing EPUB Transformation Engine for ${selectedFiles.length} file(s)...`, 'system');
+    addLog(`Selected Font: ${finalFont}`, 'info');
+    if (findText) {
+      addLog(`Find & Replace active: "${findText}" -> "${replaceText}"`, 'warning');
+    }
 
-      setProgress(30);
-      addLog(`Uploading to DGLab Processing Node...`, 'info');
+    const newResults = [];
 
-      const response = await fetch('/api/epub/transform', {
-        method: 'POST',
-        body: formData
-      });
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const fileObj = selectedFiles[i];
+      if (!fileObj.raw) continue;
 
-      const contentType = response.headers.get('content-type');
-      if (!response.ok) {
-        let errorMsg = 'Failed to process EPUB';
-        if (contentType && contentType.includes('application/json')) {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorMsg;
-        } else {
-          const text = await response.text();
-          errorMsg = text.substring(0, 100) || errorMsg;
+      try {
+        addLog(`[${i + 1}/${selectedFiles.length}] Analyzing EPUB structure for ${fileObj.name}...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        addLog(`[${i + 1}/${selectedFiles.length}] Extracting internal XHTML and CSS assets...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        if (finalFont !== 'original') {
+          addLog(`[${i + 1}/${selectedFiles.length}] Preparing to inject font: ${finalFont}...`, 'info');
+          await new Promise(resolve => setTimeout(resolve, 400));
         }
-        throw new Error(errorMsg);
+        
+        if (findText) {
+          addLog(`[${i + 1}/${selectedFiles.length}] Compiling search patterns for text replacement...`, 'info');
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        addLog(`[${i + 1}/${selectedFiles.length}] Uploading and executing server-side transformations...`, 'system');
+
+        const formData = new FormData();
+        formData.append('file', fileObj.raw);
+        formData.append('font', finalFont);
+        formData.append('findText', findText);
+        formData.append('replaceText', replaceText);
+        formData.append('useRegex', String(useRegex));
+        formData.append('caseSensitive', String(caseSensitive));
+        formData.append('wholeWord', String(wholeWord));
+
+        const response = await fetch('/api/epub/transform', {
+          method: 'POST',
+          body: formData
+        });
+
+        addLog(`[${i + 1}/${selectedFiles.length}] Server processing complete. Parsing results...`, 'info');
+
+        const contentType = response.headers.get('content-type');
+        if (!response.ok) {
+          let errorMsg = `Failed to process ${fileObj.name}`;
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json();
+            errorMsg = errorData.error || errorMsg;
+          } else {
+            const text = await response.text();
+            errorMsg = text.substring(0, 100) || errorMsg;
+          }
+          throw new Error(errorMsg);
+        }
+
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          throw new Error(`Server returned non-JSON response for ${fileObj.name}: ${text.substring(0, 100)}`);
+        }
+
+        const data = await response.json();
+        
+        addLog(`[${i + 1}/${selectedFiles.length}] Success: ${data.modifiedCount} files modified.`, 'success');
+        
+        newResults.push({
+          originalName: fileObj.name,
+          downloadUrl: data.downloadUrl,
+          filename: data.filename,
+          modifiedCount: data.modifiedCount,
+          textReplacedCount: data.textReplacedCount,
+          offlineSupport: data.offlineSupport
+        });
+        
+        setProgress(Math.round(((i + 1) / selectedFiles.length) * 100));
+      } catch (error) {
+        console.error(`Transformation failed for ${fileObj.name}:`, error);
+        const msg = error instanceof Error ? error.message : "An unknown error occurred";
+        addLog(`ERROR on ${fileObj.name}: ${msg}`, 'error');
       }
+    }
 
-      addLog(`Upload complete. Server-side processing initiated...`, 'success');
-      addLog(`Executing Deep Injection algorithm...`, 'info');
-      addLog(`Scanning internal CSS and XHTML structures...`, 'info');
-
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        throw new Error(`Server returned non-JSON response: ${text.substring(0, 100)}`);
-      }
-
-      const data = await response.json();
-      
-      addLog(`Deep Injection successful: ${data.modifiedCount} files modified.`, 'success');
-      addLog(`Re-packaging EPUB container...`, 'info');
-      addLog(`Generating secure download link...`, 'info');
-
-      setProgress(100);
-      setResult({
-        downloadUrl: data.downloadUrl,
-        filename: data.filename,
-        modifiedCount: data.modifiedCount
-      });
+    setResults(newResults);
+    if (newResults.length > 0) {
       setStatus('success');
-      addLog(`Process completed successfully.`, 'system');
-    } catch (error) {
-      console.error("Transformation failed:", error);
-      const msg = error instanceof Error ? error.message : "An unknown error occurred";
-      addLog(`CRITICAL ERROR: ${msg}`, 'error');
-      setErrorMessage(msg);
+      addLog(`Process completed. Successfully transformed ${newResults.length}/${selectedFiles.length} files.`, 'system');
+    } else {
       setStatus('error');
+      setErrorMessage("All files failed to process.");
+    }
+  };
+
+  const getButtonText = () => {
+    if (status === 'processing') return 'Processing...';
+    
+    const isOriginal = selectedFont === 'original' && !customFont;
+    const hasFindText = findText.trim().length > 0;
+    const fileCount = selectedFiles.length;
+    const epubText = fileCount > 1 ? `${fileCount} EPUBs` : 'EPUB';
+
+    if (isOriginal && hasFindText) {
+      return `Replace All in ${epubText}`;
+    } else if (!isOriginal && hasFindText) {
+      return `Change Font & Replace Text in ${epubText}`;
+    } else if (!isOriginal && !hasFindText) {
+      return `Change Font in ${epubText}`;
+    } else {
+      return `Repackage ${epubText} (No Changes)`;
     }
   };
 
@@ -140,10 +247,10 @@ export default function EpubFontChanger() {
                   {/* File Upload */}
                   <div>
                     <label className="block text-sm font-bold text-gray-700 mb-3 uppercase tracking-wider">
-                      1. Upload EPUB File
+                      1. Upload EPUB Files
                     </label>
                     
-                    {!selectedFile ? (
+                    {selectedFiles.length === 0 ? (
                       <div 
                         className="border-2 border-dashed border-gray-200 rounded-2xl p-12 text-center hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer group"
                         onClick={() => document.getElementById('file-input')?.click()}
@@ -156,28 +263,47 @@ export default function EpubFontChanger() {
                           id="file-input" 
                           className="hidden" 
                           accept=".epub" 
+                          multiple
                           onChange={handleFileChange} 
                         />
                       </div>
                     ) : (
-                      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6 flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                          <div className="p-3 bg-blue-500 text-white rounded-xl shadow-md">
-                            <FileText size={24} />
-                          </div>
-                          <div>
-                            <div className="font-bold text-gray-900">{selectedFile.name}</div>
-                            <div className="text-xs text-blue-600 font-semibold uppercase tracking-wider">
-                              {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                      <div className="space-y-3">
+                        {selectedFiles.map((file, idx) => (
+                          <div key={idx} className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex items-center justify-between">
+                            <div className="flex items-center space-x-4">
+                              <div className="p-2 bg-blue-500 text-white rounded-lg shadow-md">
+                                <FileText size={20} />
+                              </div>
+                              <div>
+                                <div className="font-bold text-gray-900 text-sm">{file.name}</div>
+                                <div className="text-[10px] text-blue-600 font-semibold uppercase tracking-wider">
+                                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                                </div>
+                              </div>
                             </div>
+                            <button 
+                              className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"
+                              onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))}
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
-                        </div>
-                        <button 
-                          className="text-red-500 hover:bg-red-100 p-2 rounded-lg transition-colors"
-                          onClick={() => setSelectedFile(null)}
+                        ))}
+                        <div 
+                          className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center hover:border-blue-400 hover:bg-blue-50 transition-all cursor-pointer group"
+                          onClick={() => document.getElementById('file-input-more')?.click()}
                         >
-                          <Trash2 size={20} />
-                        </button>
+                          <p className="text-sm font-bold text-gray-500 group-hover:text-blue-500">+ Add More EPUBs</p>
+                          <input 
+                            type="file" 
+                            id="file-input-more" 
+                            className="hidden" 
+                            accept=".epub" 
+                            multiple
+                            onChange={handleFileChange} 
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -200,26 +326,119 @@ export default function EpubFontChanger() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-80 overflow-y-auto p-1 custom-scrollbar">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-80 overflow-y-auto p-1 custom-scrollbar mb-4">
                       {filteredFonts.map((font) => (
                         <div 
                           key={font.id}
                           className={`p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col ${
-                            selectedFont === font.id 
+                            selectedFont === font.id && !customFont
                               ? 'border-blue-500 bg-blue-50 ring-4 ring-blue-50' 
                               : 'border-gray-100 hover:border-gray-200 bg-white'
                           }`}
-                          onClick={() => setSelectedFont(font.id)}
+                          onClick={() => {
+                            setSelectedFont(font.id);
+                            setCustomFont("");
+                          }}
                         >
-                          <div className={`font-bold text-lg mb-1 ${selectedFont === font.id ? 'text-blue-700' : 'text-gray-900'}`}>
+                          <div className={`font-bold text-lg mb-1 ${selectedFont === font.id && !customFont ? 'text-blue-700' : 'text-gray-900'}`}>
                             {font.name}
                           </div>
                           <div className="text-sm text-gray-500 leading-relaxed">{font.description}</div>
                         </div>
                       ))}
-                      {filteredFonts.length === 0 && (
-                        <div className="col-span-2 py-12 text-center text-gray-400 italic">
-                          No fonts found matching "{fontSearch}"
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Or Use Custom Google Font</label>
+                      <input 
+                        type="text" 
+                        placeholder="Enter Google Font Name (e.g. 'Bebas Neue')"
+                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                        value={customFont}
+                        onChange={(e) => setCustomFont(e.target.value)}
+                      />
+                      <p className="text-[10px] text-gray-400 mt-2">Enter the exact name from fonts.google.com</p>
+                    </div>
+                  </div>
+
+                  {/* Find and Replace */}
+                  <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100/50">
+                    <div className="flex items-center space-x-2 mb-4">
+                      <Replace size={18} className="text-blue-600" />
+                      <label className="block text-sm font-bold text-gray-700 uppercase tracking-wider">
+                        3. Find and Replace (Optional)
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase">Find Text</label>
+                        <input 
+                          type="text" 
+                          placeholder="Text to find..."
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
+                          value={findText}
+                          onChange={(e) => setFindText(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase">Replace With</label>
+                        <input 
+                          type="text" 
+                          placeholder="Replacement text..."
+                          className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
+                          value={replaceText}
+                          onChange={(e) => setReplaceText(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-4">
+                      <label className="flex items-center space-x-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          checked={useRegex} 
+                          onChange={(e) => setUseRegex(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-xs font-bold text-gray-600 uppercase group-hover:text-blue-600 transition-colors">Use Regex</span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          checked={caseSensitive} 
+                          onChange={(e) => setCaseSensitive(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-xs font-bold text-gray-600 uppercase group-hover:text-blue-600 transition-colors">Case Sensitive</span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer group">
+                        <input 
+                          type="checkbox" 
+                          checked={wholeWord} 
+                          onChange={(e) => setWholeWord(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-xs font-bold text-gray-600 uppercase group-hover:text-blue-600 transition-colors">Whole Word</span>
+                      </label>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <button 
+                        onClick={handleFindAll}
+                        disabled={selectedFiles.length === 0 || !findText || isSearching}
+                        className="px-4 py-2 bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 text-xs font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                      >
+                        {isSearching ? (
+                          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Search size={14} />
+                        )}
+                        <span>Find All in EPUB</span>
+                      </button>
+                      
+                      {matchCount !== null && (
+                        <div className="text-xs font-bold text-blue-600 bg-blue-100 px-3 py-1.5 rounded-lg">
+                          {matchCount} match{matchCount !== 1 ? 'es' : ''} found
                         </div>
                       )}
                     </div>
@@ -230,7 +449,7 @@ export default function EpubFontChanger() {
                     <button 
                       className="w-full py-5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-xl shadow-blue-200 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3 text-lg"
                       onClick={handleSubmit}
-                      disabled={!selectedFile || status === 'processing'}
+                      disabled={selectedFiles.length === 0 || status === 'processing'}
                     >
                       {status === 'processing' ? (
                         <motion.div 
@@ -242,7 +461,7 @@ export default function EpubFontChanger() {
                       ) : (
                         <Wand2 size={24} />
                       )}
-                      <span>{status === 'processing' ? 'Processing...' : 'Transform EPUB'}</span>
+                      <span>{getButtonText()}</span>
                     </button>
                   </div>
 
@@ -256,7 +475,7 @@ export default function EpubFontChanger() {
                         className="space-y-6"
                       >
                         <div className="space-y-3">
-                          <div className="flex justify-between text-sm font-bold text-gray-700 uppercase tracking-widest">
+                          <div className="flex justify-between text-xs sm:text-sm font-bold text-gray-700 uppercase tracking-widest">
                             <span>Processing...</span>
                             <span className="text-blue-600">{progress}%</span>
                           </div>
@@ -277,7 +496,7 @@ export default function EpubFontChanger() {
 
                   {/* Success */}
                   <AnimatePresence>
-                    {status === 'success' && result && (
+                    {status === 'success' && results.length > 0 && (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -287,24 +506,47 @@ export default function EpubFontChanger() {
                           <CheckCircle2 size={40} />
                         </div>
                         <h3 className="text-2xl font-bold text-gray-900 mb-2">Transformation Complete!</h3>
-                        <p className="text-gray-600 mb-2 max-w-md mx-auto">
-                          Your EPUB has been successfully updated with the {fonts.find(f => f.id === selectedFont)?.name} font.
+                        <p className="text-gray-600 mb-6 max-w-md mx-auto">
+                          Successfully processed {results.length} EPUB{results.length !== 1 ? 's' : ''}.
                         </p>
-                        <p className="text-xs text-blue-500 font-mono mb-8 uppercase tracking-widest">
-                          Deep Injection: {result.modifiedCount} files modified
-                        </p>
-                        <a 
-                          href={result.downloadUrl} 
-                          download={result.filename}
-                          className="inline-flex items-center space-x-3 px-10 py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-2xl shadow-lg shadow-green-200 transition-all transform hover:scale-105 mb-8"
-                        >
-                          <Download size={24} />
-                          <span>Download EPUB</span>
-                        </a>
+                        
+                        <div className="space-y-3 mb-8">
+                          {results.map((res, idx) => (
+                            <div key={idx} className="bg-white p-4 rounded-xl border border-green-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                              <div className="text-left">
+                                <div className="font-bold text-gray-900 text-sm">{res.originalName}</div>
+                                <div className="text-[10px] text-green-600 font-mono uppercase tracking-widest mt-1">
+                                  Mods: {res.modifiedCount} | Rep: {res.textReplacedCount}
+                                </div>
+                              </div>
+                              <a 
+                                href={res.downloadUrl}
+                                download={res.filename}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-lg transition-all shadow-md shadow-green-200 flex items-center space-x-2 whitespace-nowrap"
+                              >
+                                <Download size={16} />
+                                <span>Download</span>
+                              </a>
+                            </div>
+                          ))}
+                        </div>
 
-                        <div className="max-w-xl mx-auto">
+                        <div className="max-w-xl mx-auto mb-8">
                           <Console logs={logs} title="Process Log History" maxHeight="150px" />
                         </div>
+                        
+                        <button 
+                          onClick={() => {
+                            setStatus('idle');
+                            setSelectedFiles([]);
+                            setResults([]);
+                            setProgress(0);
+                            setLogs([]);
+                          }}
+                          className="text-green-700 font-bold hover:text-green-800 underline underline-offset-4"
+                        >
+                          Process more files
+                        </button>
                       </motion.div>
                     )}
                   </AnimatePresence>
