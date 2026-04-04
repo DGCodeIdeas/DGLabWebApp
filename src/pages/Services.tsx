@@ -22,6 +22,15 @@ const services = [
     supportsChunking: false
   },
   {
+    id: 'manga-image',
+    name: 'MangaImage Studio',
+    description: 'Generate manga from EPUBs using AI image generation.',
+    icon: BookOpen,
+    color: 'text-pink-500',
+    bg: 'bg-pink-50',
+    supportsChunking: false
+  },
+  {
     id: 'asset-bundler',
     name: 'PHP Asset Bundler',
     description: 'Pure-PHP dependency resolution and bundling for JavaScript and CSS assets.',

@@ -8,6 +8,7 @@ import Home from './pages/Home';
 import Services from './pages/Services';
 import EpubFontChanger from './pages/EpubFontChanger';
 import MangaScript from './pages/MangaScript';
+import MangaImage from './pages/MangaImage';
 import Docs from './pages/Docs';
 
 const routes = [
@@ -15,6 +16,7 @@ const routes = [
   { path: '/services', component: Services },
   { path: '/services/epub-font-changer', component: EpubFontChanger },
   { path: '/services/manga-script', component: MangaScript },
+  { path: '/services/manga-image', component: MangaImage },
   { path: '/docs', component: Docs },
   { path: '/404', component: () => <div className="flex-grow flex items-center justify-center text-2xl font-bold">404 - Page Not Found</div> }
 ];

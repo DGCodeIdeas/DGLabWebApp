@@ -7,17 +7,43 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
+import os from 'os';
+import { google } from 'googleapis';
+import cookieSession from 'cookie-session';
+import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure storage directories exist
-const storageDir = path.join(process.cwd(), 'storage');
-const uploadsDir = path.join(storageDir, 'uploads');
-if (!fs.existsSync(storageDir)) fs.mkdirSync(storageDir);
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+// Google OAuth Setup
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  // This will be constructed dynamically in the routes
+  '' 
+);
 
-const upload = multer({ dest: 'storage/uploads/' });
+const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+
+// Use /tmp for uploads - more reliable in cloud environments
+const uploadsDir = path.join(os.tmpdir(), 'mangascript-uploads');
+if (!fs.existsSync(uploadsDir)) {
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (err) {
+    console.error("Failed to create uploads dir:", err);
+  }
+}
+
+const upload = multer({ 
+  dest: uploadsDir,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit
+  }
+});
 
 async function startServer() {
   const app = express();
@@ -25,6 +51,136 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
+  app.use(cookieParser());
+  app.use(cookieSession({
+    name: 'session',
+    keys: [process.env.SESSION_SECRET || 'mangascript-secret'],
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    secure: true,
+    sameSite: 'none'
+  }));
+
+  // Helper to get redirect URI
+  const getRedirectUri = (req: express.Request) => {
+    // Priority 1: APP_URL environment variable (standard in this environment)
+    if (process.env.APP_URL) {
+      return `${process.env.APP_URL.replace(/\/$/, '')}/auth/google/callback`;
+    }
+
+    // Priority 2: X-Forwarded headers from proxy
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    
+    // If host is localhost but we are likely behind a proxy, 
+    // we might need to be careful. But in this environment, 
+    // APP_URL is the source of truth.
+    return `${protocol}://${host}/auth/google/callback`;
+  };
+
+  // Google Auth Routes
+  app.get('/api/auth/google/url', (req, res) => {
+    const redirectUri = getRedirectUri(req);
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: DRIVE_SCOPES,
+      redirect_uri: redirectUri,
+      prompt: 'consent'
+    });
+    res.json({ url });
+  });
+
+  app.get(['/auth/google/callback', '/auth/google/callback/'], async (req, res) => {
+    const { code } = req.query;
+    if (!code) return res.status(400).send('No code provided');
+
+    try {
+      const redirectUri = getRedirectUri(req);
+      const { tokens } = await oauth2Client.getToken({
+        code: code as string,
+        redirect_uri: redirectUri
+      });
+      
+      (req.session as any).tokens = tokens;
+
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p>Authentication successful. This window should close automatically.</p>
+          </body>
+        </html>
+      `);
+    } catch (error) {
+      console.error('Error exchanging code for tokens:', error);
+      res.status(500).send('Authentication failed');
+    }
+  });
+
+  app.get('/api/auth/google/status', (req, res) => {
+    const tokens = (req.session as any).tokens;
+    res.json({ connected: !!tokens });
+  });
+
+  app.post('/api/auth/google/disconnect', (req, res) => {
+    (req.session as any).tokens = null;
+    res.json({ success: true });
+  });
+
+  // Helper to upload to Google Drive
+  async function uploadToDrive(tokens: any, filePath: string, fileName: string) {
+    const auth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    auth.setCredentials(tokens);
+    const drive = google.drive({ version: 'v3', auth });
+
+    // 1. Find or create "MangaScript" folder
+    let folderId = '';
+    const folderResponse = await drive.files.list({
+      q: "name = 'MangaScript' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+      fields: 'files(id)',
+      spaces: 'drive'
+    });
+
+    if (folderResponse.data.files && folderResponse.data.files.length > 0) {
+      folderId = folderResponse.data.files[0].id!;
+    } else {
+      const newFolder = await drive.files.create({
+        requestBody: {
+          name: 'MangaScript',
+          mimeType: 'application/vnd.google-apps.folder'
+        },
+        fields: 'id'
+      });
+      folderId = newFolder.data.id!;
+    }
+
+    // 2. Upload file
+    const fileMetadata = {
+      name: fileName,
+      parents: [folderId]
+    };
+    const media = {
+      mimeType: 'application/epub+zip',
+      body: fs.createReadStream(filePath)
+    };
+
+    const response = await drive.files.create({
+      requestBody: fileMetadata,
+      media: media,
+      fields: 'id, webViewLink'
+    });
+
+    return response.data;
+  }
 
   // MangaScript AI Routing Engine Logic
   const providerCategories = {
@@ -56,6 +212,147 @@ async function startServer() {
         model: selectedModel
       }
     });
+  });
+
+  // MangaScript EPUB Parsing Logic
+  app.post('/api/mangascript/parse', upload.single('file'), async (req, res) => {
+    const file = (req as any).file;
+    if (!file) {
+      console.error("No file in request");
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log(`Parsing EPUB: ${file.originalname} (${file.size} bytes)`);
+
+    try {
+      if (!fs.existsSync(file.path)) {
+        throw new Error(`Uploaded file not found at ${file.path}`);
+      }
+
+      // Handle Google Drive Upload if connected
+      const tokens = (req.session as any).tokens;
+      let driveFileId = null;
+      let driveLink = null;
+
+      if (tokens) {
+        try {
+          console.log("Uploading to Google Drive...");
+          const driveData = await uploadToDrive(tokens, file.path, file.originalname);
+          driveFileId = driveData.id;
+          driveLink = driveData.webViewLink;
+          console.log(`Uploaded to Drive: ${driveFileId}`);
+        } catch (driveError) {
+          console.error("Error uploading to Google Drive:", driveError);
+          // Continue with parsing even if drive upload fails
+        }
+      }
+
+      const zip = new AdmZip(file.path);
+      const zipEntries = zip.getEntries();
+      console.log(`Found ${zipEntries.length} entries in ZIP`);
+      
+      // Find OPF file
+      const opfEntry = zipEntries.find(e => e.entryName.endsWith('.opf'));
+      if (!opfEntry) {
+        console.error("No OPF file found in EPUB");
+        return res.status(400).json({ error: 'Invalid EPUB: No OPF file found' });
+      }
+
+      console.log(`Found OPF: ${opfEntry.entryName}`);
+      const opfContent = opfEntry.getData().toString('utf8');
+      
+      // Very basic XML parsing using regex (for simplicity in this environment)
+      const manifestMatch = opfContent.match(/<manifest>([\s\S]*?)<\/manifest>/);
+      const spineMatch = opfContent.match(/<spine[^>]*>([\s\S]*?)<\/spine>/);
+      
+      if (!manifestMatch) {
+        console.error("Manifest not found in OPF");
+        return res.status(400).json({ error: 'Invalid EPUB: Missing manifest' });
+      }
+      if (!spineMatch) {
+        console.error("Spine not found in OPF");
+        return res.status(400).json({ error: 'Invalid EPUB: Missing spine' });
+      }
+
+      console.log(`Manifest and Spine found. Parsing items...`);
+
+      const manifestItems = [...manifestMatch[1].matchAll(/<item[^>]+id="([^"]+)"[^>]+href="([^"]+)"/g)];
+      const manifestMap: Record<string, string> = {};
+      manifestItems.forEach(m => {
+        manifestMap[m[1]] = m[2];
+      });
+
+      const spineItems = [...spineMatch[1].matchAll(/<itemref[^>]+idref="([^"]+)"/g)];
+      
+      const chapters = [];
+      let order = 0;
+
+      // Determine base path of OPF to resolve relative hrefs
+      const opfBasePath = opfEntry.entryName.includes('/') ? opfEntry.entryName.substring(0, opfEntry.entryName.lastIndexOf('/') + 1) : '';
+
+      for (const s of spineItems) {
+        const idref = s[1];
+        const href = manifestMap[idref];
+        if (href) {
+          // Decode URI component because hrefs might be URL-encoded
+          const decodedHref = decodeURIComponent(href);
+          const fullPath = opfBasePath + decodedHref;
+          
+          const entry = zipEntries.find(e => e.entryName === fullPath || e.entryName.endsWith(decodedHref));
+          if (entry && (fullPath.endsWith('.html') || fullPath.endsWith('.xhtml'))) {
+            const htmlContent = entry.getData().toString('utf8');
+            
+            // Extract a title (very basic)
+            let title = `Chapter ${order + 1}`;
+            const titleMatch = htmlContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+            if (titleMatch && titleMatch[1].trim()) {
+              title = titleMatch[1].trim();
+            } else {
+              const h1Match = htmlContent.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+              if (h1Match && h1Match[1].trim()) {
+                title = h1Match[1].replace(/<[^>]+>/g, '').trim();
+              }
+            }
+
+            // Determine type
+            let type = 'chapter';
+            const lowerTitle = title.toLowerCase();
+            if (lowerTitle.includes('prologue')) type = 'prologue';
+            else if (lowerTitle.includes('interlude')) type = 'interlude';
+            else if (lowerTitle.includes('epilogue')) type = 'epilogue';
+
+            // Extract text content (strip HTML tags for the 'content' field)
+            // We keep the raw HTML in a separate field if needed, but for translation, text is often easier.
+            // Actually, we should probably translate the HTML to preserve formatting.
+            // For now, let's just pass the raw HTML as content.
+            
+            chapters.push({
+              title,
+              type,
+              order,
+              content: htmlContent,
+              entryName: entry.entryName
+            });
+            order++;
+          }
+        }
+      }
+
+      console.log(`Found ${chapters.length} chapters in spine`);
+
+      // Cleanup uploaded file
+      fs.unlinkSync(file.path);
+
+      res.json({ 
+        success: true, 
+        chapters,
+        driveFileId,
+        driveLink
+      });
+    } catch (error) {
+      console.error("EPUB parse failed:", error);
+      res.status(500).json({ error: 'Failed to parse EPUB' });
+    }
   });
 
   // EPUB Search Logic

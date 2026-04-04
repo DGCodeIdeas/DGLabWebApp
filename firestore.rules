@@ -48,6 +48,28 @@ service cloud.firestore {
     //   - metadata: map (optional)
     //   - createdAt: timestamp (required)
     //
+    // Collection: manga_projects
+    // Document ID: {projectId}
+    // Fields:
+    //   - userId: string (required)
+    //   - title: string (required)
+    //   - status: string (required, ['uploading', 'parsing', 'ready', 'packing', 'completed'])
+    //   - createdAt: string (required)
+    //   - fileName: string (required)
+    //   - downloadUrl: string (optional)
+    //
+    // Collection: manga_projects/{projectId}/chapters
+    // Document ID: {chapterId}
+    // Fields:
+    //   - projectId: string (required)
+    //   - title: string (required)
+    //   - type: string (required, ['chapter', 'prologue', 'interlude', 'epilogue', 'other'])
+    //   - order: int (required)
+    //   - content: string (required)
+    //   - translatedContent: string (optional)
+    //   - status: string (required, ['pending', 'ai_processing', 'human_proofread', 'approved', 'packing'])
+    //   - entryName: string (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -63,9 +85,12 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "opensc306@gmail.com" && request.auth.token.email_verified == true));
+      return request.auth != null && (
+        ('email' in request.auth.token && request.auth.token.email == "opensc306@gmail.com") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
     function hasRequiredFields(fields) {
@@ -86,11 +111,11 @@ service cloud.firestore {
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'email', 'status', 'role']) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
-             isValidEmail(data.email) &&
+             (data.email == '' || isValidEmail(data.email)) &&
              data.status in ['active', 'pending', 'suspended'] &&
              data.role in ['admin', 'user'] &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 500));
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 200)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000));
     }
 
     function isValidTenant(data) {
@@ -125,16 +150,43 @@ service cloud.firestore {
              (!('metadata' in data) || (data.metadata is map && data.metadata.size() < 50));
     }
 
+    function isValidMangaProject(data) {
+      return hasRequiredFields(['userId', 'title', 'status', 'createdAt', 'fileName']) &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() < 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.status in ['uploading', 'parsing', 'ready', 'packing', 'completed'] &&
+             data.createdAt is string &&
+             data.fileName is string && data.fileName.size() > 0 && data.fileName.size() < 500 &&
+             (!('downloadUrl' in data) || (data.downloadUrl is string && data.downloadUrl.size() < 2000));
+    }
+
+    function isValidMangaChapter(data) {
+      return hasRequiredFields(['projectId', 'title', 'type', 'order', 'content', 'status', 'entryName']) &&
+             data.projectId is string && data.projectId.size() > 0 && data.projectId.size() < 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.type in ['chapter', 'prologue', 'interlude', 'epilogue', 'other'] &&
+             data.order is int && data.order >= 0 &&
+             data.content is string &&
+             data.status in ['pending', 'ai_processing', 'human_proofread', 'approved', 'packing'] &&
+             data.entryName is string && data.entryName.size() > 0 && data.entryName.size() < 500 &&
+             (!('translatedContent' in data) || data.translatedContent is string);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == 'user') || isAdmin()
+      );
+      
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()
+      );
+      
       allow delete: if isAdmin();
     }
 
@@ -157,6 +209,80 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAuthenticated() && isValidAuditLog(request.resource.data);
       allow update, delete: if false;
+    }
+
+    match /manga_projects/{projectId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isAuthenticated() && isValidMangaProject(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      
+      allow update: if isAuthenticated() && isValidMangaProject(request.resource.data) && 
+                      request.resource.data.userId == resource.data.userId &&
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      (resource.data.userId == request.auth.uid || isAdmin());
+                      
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      match /chapters/{chapterId} {
+        allow read: if request.auth != null && (
+          (exists(/databases/$(database)/documents/manga_projects/$(projectId)) && get(/databases/$(database)/documents/manga_projects/$(projectId)).data.userId == request.auth.uid) || 
+          isAdmin()
+        );
+        
+        allow create: if isAuthenticated() && isValidMangaChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/manga_projects/$(projectId)) && get(/databases/$(database)/documents/manga_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow update: if isAuthenticated() && isValidMangaChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/manga_projects/$(projectId)) && get(/databases/$(database)/documents/manga_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow delete: if isAuthenticated() && (
+          (exists(/databases/$(database)/documents/manga_projects/$(projectId)) && get(/databases/$(database)/documents/manga_projects/$(projectId)).data.userId == request.auth.uid) ||
+          isAdmin()
+        );
+      }
+    }
+
+    match /manga_image_projects/{projectId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isAuthenticated() && isValidMangaProject(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      
+      allow update: if isAuthenticated() && isValidMangaProject(request.resource.data) && 
+                      request.resource.data.userId == resource.data.userId &&
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      (resource.data.userId == request.auth.uid || isAdmin());
+                      
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      match /chapters/{chapterId} {
+        allow read: if request.auth != null && (
+          (exists(/databases/$(database)/documents/manga_image_projects/$(projectId)) && get(/databases/$(database)/documents/manga_image_projects/$(projectId)).data.userId == request.auth.uid) || 
+          isAdmin()
+        );
+        
+        allow create: if isAuthenticated() && isValidMangaChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/manga_image_projects/$(projectId)) && get(/databases/$(database)/documents/manga_image_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow update: if isAuthenticated() && isValidMangaChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/manga_image_projects/$(projectId)) && get(/databases/$(database)/documents/manga_image_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow delete: if isAuthenticated() && (
+          (exists(/databases/$(database)/documents/manga_image_projects/$(projectId)) && get(/databases/$(database)/documents/manga_image_projects/$(projectId)).data.userId == request.auth.uid) ||
+          isAdmin()
+        );
+      }
     }
 
     // Default deny

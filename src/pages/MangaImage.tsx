@@ -33,7 +33,7 @@ interface Project {
   driveLink?: string;
 }
 
-export default function MangaScript() {
+export default function MangaImage() {
   const { user, loading, openLoginModal } = useFirebase();
   const [view, setView] = useState<ViewState>('project_list');
   const [projects, setProjects] = useState<Project[]>([]);
@@ -42,6 +42,7 @@ export default function MangaScript() {
   const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   
   // Proofreading state
@@ -166,7 +167,7 @@ export default function MangaScript() {
   // Fetch projects
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'manga_projects'), where('userId', '==', user.uid));
+    const q = query(collection(db, 'manga_image_projects'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const projs: Project[] = [];
       snapshot.forEach((doc) => {
@@ -188,7 +189,7 @@ export default function MangaScript() {
   // Fetch chapters for current project
   useEffect(() => {
     if (!currentProject) return;
-    const q = query(collection(db, `manga_projects/${currentProject.id}/chapters`), orderBy('order', 'asc'));
+    const q = query(collection(db, `manga_image_projects/${currentProject.id}/chapters`), orderBy('order', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const chaps: Chapter[] = [];
       snapshot.forEach((doc) => {
@@ -225,7 +226,7 @@ export default function MangaScript() {
         createdAt: new Date().toISOString(),
         fileName: file.name
       };
-      await setDoc(doc(db, 'manga_projects', projectId), newProject);
+      await setDoc(doc(db, 'manga_image_projects', projectId), newProject);
       setCurrentProject(newProject);
 
       // 2. Send to backend for parsing
@@ -254,11 +255,11 @@ export default function MangaScript() {
           projectId: projectId,
           status: 'pending'
         };
-        await setDoc(doc(db, `manga_projects/${projectId}/chapters`, chapterId), newChap);
+        await setDoc(doc(db, `manga_image_projects/${projectId}/chapters`, chapterId), newChap);
       }
 
       // 4. Update project status
-      await updateDoc(doc(db, 'manga_projects', projectId), { 
+      await updateDoc(doc(db, 'manga_image_projects', projectId), { 
         status: 'ready',
         driveFileId: data.driveFileId || null,
         driveLink: data.driveLink || null
@@ -293,33 +294,44 @@ export default function MangaScript() {
     }
   };
 
-  const startAITranslation = async (chapter: Chapter) => {
+  const startMangaGeneration = async (chapter: Chapter) => {
     if (!currentProject) return;
     setIsProcessing(true);
+    setGenerationProgress(0);
     setCurrentChapter(chapter);
     setView('chapter_view');
     setLogs([]);
     
     try {
-      addLog(`Starting AI Transformation for ${chapter.title}...`, 'system');
-      await updateDoc(doc(db, `manga_projects/${currentProject.id}/chapters`, chapter.id!), {
+      addLog(`Starting Manga Generation for ${chapter.title}...`, 'system');
+      await updateDoc(doc(db, `manga_image_projects/${currentProject.id}/chapters`, chapter.id!), {
         status: 'ai_processing'
       });
 
       // Simulate AI processing (chunking if needed)
       addLog(`Analyzing chapter length (${chapter.content.length} chars)...`, 'info');
+      setGenerationProgress(10);
       if (chapter.content.length > 10000) {
         addLog(`Chapter is large. Applying chunky transformation strategy...`, 'warning');
       }
       
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      addLog(`Translating and proofreading...`, 'info');
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setGenerationProgress(30);
+      addLog(`Generating manga panels...`, 'info');
+      
+      // Simulate progress updates
+      for (let i = 40; i <= 90; i += 10) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        setGenerationProgress(i);
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setGenerationProgress(100);
       
       // Mock translated content
-      const mockTranslated = `<h1>[Translated] ${chapter.title}</h1>\n<p>This is the AI translated and proofread content.</p>\n<hr/>\n` + chapter.content;
+      const mockTranslated = `<h1>[Generated Manga] ${chapter.title}</h1>\n<p>This is the AI generated manga content.</p>\n<hr/>\n` + chapter.content;
       
-      await updateDoc(doc(db, `manga_projects/${currentProject.id}/chapters`, chapter.id!), {
+      await updateDoc(doc(db, `manga_image_projects/${currentProject.id}/chapters`, chapter.id!), {
         status: 'human_proofread',
         translatedContent: mockTranslated
       });
@@ -330,13 +342,14 @@ export default function MangaScript() {
       addLog(`Error: ${error instanceof Error ? error.message : String(error)}`, 'error');
     } finally {
       setIsProcessing(false);
+      setGenerationProgress(0);
     }
   };
 
   const handleApproveChapter = async () => {
     if (!currentProject || !currentChapter) return;
     try {
-      await updateDoc(doc(db, `manga_projects/${currentProject.id}/chapters`, currentChapter.id!), {
+      await updateDoc(doc(db, `manga_image_projects/${currentProject.id}/chapters`, currentChapter.id!), {
         status: 'approved',
         translatedContent: editedContent
       });
@@ -349,69 +362,26 @@ export default function MangaScript() {
 
   const handleRegenerate = () => {
     if (currentChapter) {
-      startAITranslation(currentChapter);
+      startMangaGeneration(currentChapter);
     }
   };
 
-  const handlePackEpub = async () => {
+  const handlePackManga = async () => {
     if (!currentProject) return;
     try {
-      addLog(`Packing EPUB...`, 'system');
-      await updateDoc(doc(db, 'manga_projects', currentProject.id), { status: 'packing' });
+      addLog(`Packing Manga...`, 'system');
+      await updateDoc(doc(db, 'manga_image_projects', currentProject.id), { status: 'packing' });
       
       // Simulate packing
       await new Promise(resolve => setTimeout(resolve, 3000));
       
-      await updateDoc(doc(db, 'manga_projects', currentProject.id), { 
+      await updateDoc(doc(db, 'manga_image_projects', currentProject.id), { 
         status: 'completed',
         downloadUrl: '#' // Mock URL
       });
-      addLog(`EPUB Packed successfully!`, 'success');
+      addLog(`Manga Packed successfully!`, 'success');
     } catch (error) {
       console.error("Failed to pack:", error);
-    }
-  };
-
-  const handleTransferToMangaImage = async () => {
-    if (!currentProject || !user) return;
-    try {
-      addLog(`Transferring to MangaImage...`, 'system');
-      
-      // Create new project in manga_image_projects
-      const newProjectId = 'img_proj_' + Math.random().toString(36).substr(2, 9);
-      const newProject: Project = {
-        id: newProjectId,
-        userId: user.uid,
-        title: currentProject.title + ' (Image)',
-        status: 'ready',
-        createdAt: new Date().toISOString(),
-        fileName: currentProject.fileName
-      };
-      
-      await setDoc(doc(db, 'manga_image_projects', newProjectId), newProject);
-      
-      // Copy chapters
-      for (const chap of chapters) {
-        const newChapterId = 'img_chap_' + Math.random().toString(36).substr(2, 9);
-        const newChap: Chapter = {
-          ...chap,
-          projectId: newProjectId,
-          status: 'pending',
-          content: chap.translatedContent || chap.content, // Use translated content as base
-          translatedContent: ''
-        };
-        delete newChap.id;
-        await setDoc(doc(db, `manga_image_projects/${newProjectId}/chapters`, newChapterId), newChap);
-      }
-      
-      addLog(`Transfer complete! Redirecting...`, 'success');
-      setTimeout(() => {
-        window.location.hash = '#/services/manga-image';
-      }, 1000);
-      
-    } catch (error) {
-      console.error("Failed to transfer:", error);
-      addLog(`Error transferring: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -435,9 +405,9 @@ export default function MangaScript() {
             <div className="bg-purple-600 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-purple-500/20">
               <BookOpen size={40} />
             </div>
-            <h2 className="text-3xl font-bold mb-4">MangaScript Studio</h2>
+            <h2 className="text-3xl font-bold mb-4">MangaImage Studio</h2>
             <p className="text-gray-400 mb-8 leading-relaxed">
-              AI-powered EPUB translation and proofreading workflow. Sign in to manage your projects.
+              AI-powered EPUB to Manga generation workflow. Sign in to manage your projects.
             </p>
             <button 
               onClick={handleSignIn}
@@ -461,7 +431,7 @@ export default function MangaScript() {
             <BookOpen size={24} />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">MangaScript Studio</h1>
+            <h1 className="text-xl font-bold tracking-tight">MangaImage Studio</h1>
             <div className="flex items-center space-x-2 text-xs text-gray-400 font-medium uppercase tracking-wider">
               <span className="text-purple-400">Workflow</span>
               {currentProject && (
@@ -514,7 +484,7 @@ export default function MangaScript() {
               <div className="text-center py-20 bg-gray-800/50 rounded-3xl border border-gray-700 border-dashed">
                 <BookOpen size={48} className="mx-auto text-gray-600 mb-4" />
                 <h3 className="text-xl font-bold text-gray-400 mb-2">No projects yet</h3>
-                <p className="text-gray-500">Upload an EPUB to start translating and proofreading.</p>
+                <p className="text-gray-500">Upload an EPUB to start generating manga.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -552,7 +522,7 @@ export default function MangaScript() {
         {view === 'upload' && (
           <div className="w-full max-w-2xl mx-auto p-8 flex flex-col items-center justify-center">
             <h2 className="text-3xl font-bold mb-2 text-center">Upload EPUB</h2>
-            <p className="text-gray-400 mb-8 text-center">Upload a Japanese Light Novel or Manga EPUB to begin the translation workflow.</p>
+            <p className="text-gray-400 mb-8 text-center">Upload a translated EPUB to begin the manga generation workflow.</p>
             
             <div className="w-full mb-8 p-4 bg-gray-800/50 border border-gray-700 rounded-2xl flex items-center justify-between">
               <div className="flex items-center space-x-3">
@@ -629,12 +599,12 @@ export default function MangaScript() {
                 <div className="flex justify-between items-center mt-2">
                   <span className="text-xs text-gray-400">{chapters.length} Chapters</span>
                   <button 
-                    onClick={handlePackEpub}
+                    onClick={handlePackManga}
                     disabled={currentProject.status === 'packing' || chapters.some(c => c.status !== 'approved')}
                     className="px-3 py-1 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs font-bold rounded flex items-center space-x-1 transition-colors"
                   >
                     <Download size={14} />
-                    <span>Pack EPUB</span>
+                    <span>Pack Manga</span>
                   </button>
                 </div>
               </div>
@@ -644,7 +614,7 @@ export default function MangaScript() {
                     key={chap.id}
                     onClick={() => {
                       if (chap.status === 'pending') {
-                        startAITranslation(chap);
+                        startMangaGeneration(chap);
                       } else {
                         setCurrentChapter(chap);
                         setEditedContent(chap.translatedContent || chap.content);
@@ -675,7 +645,7 @@ export default function MangaScript() {
               {currentProject.status === 'packing' ? (
                 <div className="text-center space-y-6">
                   <Loader2 size={64} className="animate-spin text-green-500 mx-auto" />
-                  <h2 className="text-2xl font-bold">Packing Final EPUB...</h2>
+                  <h2 className="text-2xl font-bold">Packing Final Manga...</h2>
                   <Console logs={logs} title="Packing Logs" maxHeight="200px" />
                 </div>
               ) : currentProject.status === 'completed' ? (
@@ -683,30 +653,21 @@ export default function MangaScript() {
                   <div className="w-24 h-24 bg-green-900/30 rounded-full flex items-center justify-center mx-auto border border-green-500/50">
                     <CheckCircle2 size={48} className="text-green-500" />
                   </div>
-                  <h2 className="text-3xl font-bold text-white">EPUB Ready!</h2>
+                  <h2 className="text-3xl font-bold text-white">Manga Ready!</h2>
                   <p className="text-gray-400">All chapters have been approved and packed.</p>
-                  <div className="flex flex-col space-y-4 items-center mt-4">
-                    <a 
-                      href={currentProject.downloadUrl}
-                      className="inline-flex items-center justify-center space-x-2 px-8 py-4 w-full max-w-xs bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-lg transition-all"
-                    >
-                      <Download size={20} />
-                      <span>Download Translated EPUB</span>
-                    </a>
-                    <button 
-                      onClick={handleTransferToMangaImage}
-                      className="inline-flex items-center justify-center space-x-2 px-8 py-4 w-full max-w-xs bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-lg transition-all"
-                    >
-                      <Sparkles size={20} />
-                      <span>Transfer to MangaImage</span>
-                    </button>
-                  </div>
+                  <a 
+                    href={currentProject.downloadUrl}
+                    className="inline-flex items-center space-x-2 px-8 py-4 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-lg transition-all"
+                  >
+                    <Download size={20} />
+                    <span>Download Generated Manga</span>
+                  </a>
                 </div>
               ) : (
                 <div className="text-center max-w-md">
                   <BookOpen size={64} className="text-gray-700 mx-auto mb-6" />
                   <h2 className="text-2xl font-bold mb-2">Project Overview</h2>
-                  <p className="text-gray-500 mb-8">Select a chapter from the sidebar to begin AI translation and proofreading.</p>
+                  <p className="text-gray-500 mb-8">Select a chapter from the sidebar to begin Manga generation and proofreading.</p>
                   
                   <div className="grid grid-cols-2 gap-4 text-left">
                     <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
@@ -833,7 +794,24 @@ export default function MangaScript() {
               {isProcessing ? (
                 <div className="w-full flex flex-col items-center justify-center bg-gray-950 p-8">
                   <Loader2 size={48} className="animate-spin text-purple-500 mb-6" />
-                  <h3 className="text-xl font-bold mb-8">AI Transformation in Progress...</h3>
+                  <h3 className="text-xl font-bold mb-4">Manga Generation in Progress...</h3>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full max-w-md mb-8">
+                    <div className="flex justify-between text-sm text-gray-400 mb-2">
+                      <span>Progress</span>
+                      <span>{generationProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden border border-gray-700">
+                      <motion.div 
+                        className="bg-purple-500 h-full rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${generationProgress}%` }}
+                        transition={{ duration: 0.3 }}
+                      />
+                    </div>
+                  </div>
+                  
                   <div className="w-full max-w-2xl">
                     <Console logs={logs} title="AI Processing Stream" maxHeight="300px" />
                   </div>

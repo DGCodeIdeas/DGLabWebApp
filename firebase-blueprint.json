@@ -2,63 +2,46 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "A user of the DGLab platform.",
+      "description": "A user of the platform.",
       "type": "object",
       "properties": {
         "uuid": { "type": "string" },
         "email": { "type": "string", "format": "email" },
-        "username": { "type": "string" },
         "displayName": { "type": "string" },
         "photoURL": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "pending", "suspended"] },
-        "mfaEnabled": { "type": "boolean" },
         "role": { "type": "string", "enum": ["admin", "user"] }
       },
       "required": ["uuid", "email", "role"]
     },
-    "Tenant": {
-      "title": "Tenant",
-      "description": "An organization or project container.",
+    "MangaProject": {
+      "title": "MangaProject",
+      "description": "An uploaded EPUB project for MangaScript.",
       "type": "object",
       "properties": {
-        "identifier": { "type": "string" },
-        "domain": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
-        "config": { "type": "object" }
-      },
-      "required": ["identifier", "status"]
-    },
-    "Job": {
-      "title": "Job",
-      "description": "A background processing task.",
-      "type": "object",
-      "properties": {
-        "serviceId": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed", "cancelled"] },
-        "progress": { "type": "integer" },
-        "message": { "type": "string" },
-        "inputData": { "type": "object" },
-        "outputData": { "type": "object" },
         "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["uploading", "parsing", "ready", "packing", "completed"] },
         "createdAt": { "type": "string", "format": "date-time" },
-        "completedAt": { "type": "string", "format": "date-time" }
+        "fileName": { "type": "string" },
+        "downloadUrl": { "type": "string" }
       },
-      "required": ["serviceId", "status", "userId", "createdAt"]
+      "required": ["userId", "title", "status", "createdAt", "fileName"]
     },
-    "AuditLog": {
-      "title": "AuditLog",
-      "description": "A record of a system event.",
+    "MangaChapter": {
+      "title": "MangaChapter",
+      "description": "A chapter within a MangaProject.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "category": { "type": "string" },
-        "eventType": { "type": "string" },
-        "identifier": { "type": "string" },
-        "statusCode": { "type": "integer" },
-        "metadata": { "type": "object" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["chapter", "prologue", "interlude", "epilogue", "other"] },
+        "order": { "type": "integer" },
+        "content": { "type": "string" },
+        "translatedContent": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "ai_processing", "human_proofread", "approved", "packing"] },
+        "entryName": { "type": "string" }
       },
-      "required": ["category", "eventType", "createdAt"]
+      "required": ["projectId", "title", "type", "order", "content", "status", "entryName"]
     }
   },
   "firestore": {
@@ -66,17 +49,13 @@
       "schema": "User",
       "description": "User profiles."
     },
-    "/tenants/{tenantId}": {
-      "schema": "Tenant",
-      "description": "Tenant configurations."
+    "/manga_projects/{projectId}": {
+      "schema": "MangaProject",
+      "description": "MangaScript projects."
     },
-    "/jobs/{jobId}": {
-      "schema": "Job",
-      "description": "Processing jobs."
-    },
-    "/audit_logs/{logId}": {
-      "schema": "AuditLog",
-      "description": "System audit logs."
+    "/manga_projects/{projectId}/chapters/{chapterId}": {
+      "schema": "MangaChapter",
+      "description": "Chapters within a MangaScript project."
     }
   }
 }

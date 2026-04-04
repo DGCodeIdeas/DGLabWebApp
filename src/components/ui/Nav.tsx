@@ -1,19 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FlaskConical, Home, Wrench, Book, Code, Github, LogIn, LogOut, User, Menu, X } from 'lucide-react';
 import { useFirebase } from '../FirebaseProvider';
-import { auth, googleProvider, signInWithPopup, signOut } from '../../firebase';
+import { auth, signOut } from '../../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Nav() {
-  const { user, profile } = useFirebase();
-  const [isOpen, setIsOpen] = React.useState(false);
+  const { user, profile, openLoginModal } = useFirebase();
+  const [isOpen, setIsOpen] = useState(false);
 
-  const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login failed:", error);
-    }
+  const handleLoginClick = () => {
+    openLoginModal();
+    setIsOpen(false); // Close mobile menu if open
   };
 
   const handleLogout = async () => {
@@ -80,7 +77,7 @@ export default function Nav() {
                 </div>
               ) : (
                 <button
-                  onClick={handleLogin}
+                  onClick={handleLoginClick}
                   className="flex items-center space-x-2 px-4 py-2 rounded-md bg-white text-blue-600 font-bold hover:bg-blue-50 transition-colors"
                 >
                   <LogIn size={18} />
@@ -138,7 +135,7 @@ export default function Nav() {
                 </button>
               ) : (
                 <button
-                  onClick={() => { handleLogin(); setIsOpen(false); }}
+                  onClick={handleLoginClick}
                   className="w-full text-left block px-3 py-2 rounded-md text-base font-medium hover:bg-blue-600 flex items-center space-x-2"
                 >
                   <LogIn size={18} />

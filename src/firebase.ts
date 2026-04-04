@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, GithubAuthProvider, OAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, collection, onSnapshot, query, where, orderBy, limit, setDoc, updateDoc, deleteDoc, addDoc, Timestamp } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -8,6 +8,8 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const githubProvider = new GithubAuthProvider();
+export const microsoftProvider = new OAuthProvider('microsoft.com');
 
 // Error Handling Spec for Firestore Operations
 export enum OperationType {
