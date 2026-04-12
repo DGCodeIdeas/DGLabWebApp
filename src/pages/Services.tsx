@@ -1,8 +1,26 @@
 import React from 'react';
-import { Type, BookOpen, Code, FileText, Settings, ArrowRight, Info, Zap } from 'lucide-react';
+import { Type, BookOpen, Code, FileText, Settings, ArrowRight, Info, Zap, Globe, Gamepad2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 const services = [
+  {
+    id: 'webweaver',
+    name: 'WebWeaver',
+    description: 'Crawl web threads and novels to weave them into a coherent, high-quality EPUB book.',
+    icon: Globe,
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    supportsChunking: false
+  },
+  {
+    id: 'visual-novels',
+    name: 'Visual Novel Studio',
+    description: 'Create, edit and export interactive visual novel scripts with AI-powered dialogue assistance.',
+    icon: Gamepad2,
+    color: 'text-indigo-600',
+    bg: 'bg-indigo-50',
+    supportsChunking: false
+  },
   {
     id: 'epub-font-changer',
     name: 'EPUB Font Changer',
@@ -11,6 +29,15 @@ const services = [
     color: 'text-blue-500',
     bg: 'bg-blue-50',
     supportsChunking: true
+  },
+  {
+    id: 'story-to-vn',
+    name: 'Story to VN Studio',
+    description: 'Convert novels and stories into professional Visual Novel scripts using specialized AI models.',
+    icon: Gamepad2,
+    color: 'text-indigo-500',
+    bg: 'bg-indigo-50',
+    supportsChunking: false
   },
   {
     id: 'manga-script',

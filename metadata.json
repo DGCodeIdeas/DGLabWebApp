@@ -1,5 +1,5 @@
 {
   "name": "DGLab",
-  "description": "Digital Lab Tools - A collection of powerful utilities for file processing and digital content manipulation.",
+  "description": "Digital Lab Tools - A collection of powerful utilities for file processing, web crawling, and digital content manipulation including WebWeaver, MangaScript, and MangaImage.",
   "requestFramePermissions": []
 }

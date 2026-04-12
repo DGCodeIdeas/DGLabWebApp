@@ -42,12 +42,93 @@
         "entryName": { "type": "string" }
       },
       "required": ["projectId", "title", "type", "order", "content", "status", "entryName"]
+    },
+    "VNProject": {
+      "title": "VNProject",
+      "description": "An uploaded EPUB project for StoryToVN.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["uploading", "parsing", "ready", "packing", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "fileName": { "type": "string" },
+        "downloadUrl": { "type": "string" }
+      },
+      "required": ["userId", "title", "status", "createdAt", "fileName"]
+    },
+    "VNChapter": {
+      "title": "VNChapter",
+      "description": "A chapter within a VNProject.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["chapter", "prologue", "interlude", "epilogue", "other"] },
+        "order": { "type": "integer" },
+        "content": { "type": "string" },
+        "scriptContent": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "ai_processing", "human_proofread", "approved", "packing"] },
+        "entryName": { "type": "string" }
+      },
+      "required": ["projectId", "title", "type", "order", "content", "status", "entryName"]
+    },
+    "WebWeaverProject": {
+      "title": "WebWeaverProject",
+      "description": "A web crawling project to generate an EPUB.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "startUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "crawling", "extracting", "building", "completed", "failed"] },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "epubUrl": { "type": "string" },
+        "logs": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["userId", "startUrl", "status", "createdAt"]
+    },
+    "WebWeaverChapter": {
+      "title": "WebWeaverChapter",
+      "description": "A discovered chapter for a WebWeaver project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "order": { "type": "integer" },
+        "status": { "type": "string", "enum": ["discovered", "extracted", "failed"] }
+      },
+      "required": ["projectId", "url", "order", "status"]
+    },
+    "VisualNovel": {
+      "title": "VisualNovel",
+      "description": "A visual novel created by a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "script": { "type": "string" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "script", "isPublic", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles."
+    },
+    "/visual_novels/{novelId}": {
+      "schema": "VisualNovel",
+      "description": "Visual novels created by users."
     },
     "/manga_projects/{projectId}": {
       "schema": "MangaProject",
@@ -56,6 +137,22 @@
     "/manga_projects/{projectId}/chapters/{chapterId}": {
       "schema": "MangaChapter",
       "description": "Chapters within a MangaScript project."
+    },
+    "/vn_projects/{projectId}": {
+      "schema": "VNProject",
+      "description": "StoryToVN projects."
+    },
+    "/vn_projects/{projectId}/chapters/{chapterId}": {
+      "schema": "VNChapter",
+      "description": "Chapters within a StoryToVN project."
+    },
+    "/webweaver_projects/{projectId}": {
+      "schema": "WebWeaverProject",
+      "description": "WebWeaver projects."
+    },
+    "/webweaver_projects/{projectId}/chapters/{chapterId}": {
+      "schema": "WebWeaverChapter",
+      "description": "Chapters within a WebWeaver project."
     }
   }
 }

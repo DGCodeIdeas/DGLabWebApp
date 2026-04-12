@@ -172,6 +172,63 @@ service cloud.firestore {
              (!('translatedContent' in data) || data.translatedContent is string);
     }
 
+    function isValidVNProject(data) {
+      return hasRequiredFields(['userId', 'title', 'status', 'createdAt', 'fileName']) &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() < 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.status in ['uploading', 'parsing', 'ready', 'packing', 'completed'] &&
+             data.createdAt is string &&
+             data.fileName is string && data.fileName.size() > 0 && data.fileName.size() < 500 &&
+             (!('downloadUrl' in data) || (data.downloadUrl is string && data.downloadUrl.size() < 2000));
+    }
+
+    function isValidVNChapter(data) {
+      return hasRequiredFields(['projectId', 'title', 'type', 'order', 'content', 'status', 'entryName']) &&
+             data.projectId is string && data.projectId.size() > 0 && data.projectId.size() < 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.type in ['chapter', 'prologue', 'interlude', 'epilogue', 'other'] &&
+             data.order is int && data.order >= 0 &&
+             data.content is string &&
+             data.status in ['pending', 'ai_processing', 'human_proofread', 'approved', 'packing'] &&
+             data.entryName is string && data.entryName.size() > 0 && data.entryName.size() < 500 &&
+             (!('scriptContent' in data) || data.scriptContent is string);
+    }
+
+    function isValidWebWeaverProject(data) {
+      return hasRequiredFields(['userId', 'startUrl', 'status', 'createdAt']) &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() < 100 &&
+             data.startUrl is string && data.startUrl.size() > 0 && data.startUrl.size() < 2000 &&
+             data.status in ['pending', 'crawling', 'extracting', 'building', 'completed', 'failed'] &&
+             data.createdAt is string &&
+             (!('title' in data) || (data.title is string && data.title.size() < 500)) &&
+             (!('author' in data) || (data.author is string && data.author.size() < 200)) &&
+             (!('updatedAt' in data) || data.updatedAt is string) &&
+             (!('epubUrl' in data) || (data.epubUrl is string && data.epubUrl.size() < 2000)) &&
+             (!('logs' in data) || data.logs is list);
+    }
+
+    function isValidWebWeaverChapter(data) {
+      return hasRequiredFields(['projectId', 'url', 'order', 'status']) &&
+             data.projectId is string && data.projectId.size() > 0 && data.projectId.size() < 100 &&
+             data.url is string && data.url.size() > 0 && data.url.size() < 2000 &&
+             data.order is int && data.order >= 0 &&
+             data.status in ['discovered', 'extracted', 'failed'] &&
+             (!('title' in data) || (data.title is string && data.title.size() < 500)) &&
+             (!('content' in data) || data.content is string);
+    }
+
+    function isValidVisualNovel(data) {
+      return data.keys().hasAll(['userId', 'title', 'script', 'isPublic', 'createdAt']) &&
+             data.userId is string && 
+             data.title is string && 
+             data.script is string &&
+             data.isPublic is bool &&
+             data.createdAt is string &&
+             (!('authorName' in data) || data.authorName is string) &&
+             (!('description' in data) || data.description is string) &&
+             (!('updatedAt' in data) || data.updatedAt is string);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -283,6 +340,85 @@ service cloud.firestore {
           isAdmin()
         );
       }
+    }
+
+    match /vn_projects/{projectId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isAuthenticated() && isValidVNProject(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      
+      allow update: if isAuthenticated() && isValidVNProject(request.resource.data) && 
+                      request.resource.data.userId == resource.data.userId &&
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      (resource.data.userId == request.auth.uid || isAdmin());
+                      
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      match /chapters/{chapterId} {
+        allow read: if request.auth != null && (
+          (exists(/databases/$(database)/documents/vn_projects/$(projectId)) && get(/databases/$(database)/documents/vn_projects/$(projectId)).data.userId == request.auth.uid) || 
+          isAdmin()
+        );
+        
+        allow create: if isAuthenticated() && isValidVNChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/vn_projects/$(projectId)) && get(/databases/$(database)/documents/vn_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow update: if isAuthenticated() && isValidVNChapter(request.resource.data) && 
+                        request.resource.data.projectId == projectId && (
+                          (exists(/databases/$(database)/documents/vn_projects/$(projectId)) && get(/databases/$(database)/documents/vn_projects/$(projectId)).data.userId == request.auth.uid) ||
+                          isAdmin()
+                        );
+                        
+        allow delete: if isAuthenticated() && (
+          (exists(/databases/$(database)/documents/vn_projects/$(projectId)) && get(/databases/$(database)/documents/vn_projects/$(projectId)).data.userId == request.auth.uid) ||
+          isAdmin()
+        );
+      }
+    }
+
+    match /webweaver_projects/{projectId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidWebWeaverProject(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && isValidWebWeaverProject(request.resource.data) && 
+                      request.resource.data.userId == resource.data.userId &&
+                      (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+
+      match /chapters/{chapterId} {
+        allow read: if request.auth != null && (
+          (exists(/databases/$(database)/documents/webweaver_projects/$(projectId)) && get(/databases/$(database)/documents/webweaver_projects/$(projectId)).data.userId == request.auth.uid) || 
+          isAdmin()
+        );
+        allow create, update: if isAuthenticated() && isValidWebWeaverChapter(request.resource.data) && 
+                                request.resource.data.projectId == projectId && (
+                                  (exists(/databases/$(database)/documents/webweaver_projects/$(projectId)) && get(/databases/$(database)/documents/webweaver_projects/$(projectId)).data.userId == request.auth.uid) ||
+                                  isAdmin()
+                                );
+        allow delete: if isAuthenticated() && (
+          (exists(/databases/$(database)/documents/webweaver_projects/$(projectId)) && get(/databases/$(database)/documents/webweaver_projects/$(projectId)).data.userId == request.auth.uid) ||
+          isAdmin()
+        );
+      }
+    }
+
+    match /visual_novels/{novelId} {
+      allow read: if (resource.data.isPublic == true) || 
+                     (request.auth != null && resource.data.userId == request.auth.uid);
+      
+      allow create: if request.auth != null && 
+                       request.resource.data.userId == request.auth.uid &&
+                       isValidVisualNovel(request.resource.data);
+                       
+      allow update: if request.auth != null && 
+                       request.resource.data.userId == resource.data.userId &&
+                       request.resource.data.createdAt == resource.data.createdAt &&
+                       (resource.data.userId == request.auth.uid || isAdmin()) &&
+                       isValidVisualNovel(request.resource.data);
+                       
+      allow delete: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Default deny

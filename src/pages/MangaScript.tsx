@@ -60,7 +60,16 @@ export default function MangaScript() {
 
   const checkDriveStatus = async () => {
     try {
-      const res = await fetch('/api/auth/google/status');
+      const tokens = localStorage.getItem('google_tokens');
+      if (tokens) {
+        setIsDriveConnected(true);
+        return;
+      }
+
+      const res = await fetch('/api/auth/google/status', { 
+        credentials: 'include',
+        headers: tokens ? { 'X-Google-Tokens': tokens } : {}
+      });
       const data = await res.json();
       setIsDriveConnected(data.connected);
     } catch (e) {
@@ -73,6 +82,9 @@ export default function MangaScript() {
     
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        if (event.data.tokens) {
+          localStorage.setItem('google_tokens', JSON.stringify(event.data.tokens));
+        }
         checkDriveStatus();
         addLog("Google Drive connected successfully!", "success");
       }
@@ -83,7 +95,7 @@ export default function MangaScript() {
 
   const handleConnectDrive = async () => {
     try {
-      const res = await fetch('/api/auth/google/url');
+      const res = await fetch('/api/auth/google/url', { credentials: 'include' });
       const { url } = await res.json();
       window.open(url, 'google_oauth', 'width=600,height=700');
     } catch (e) {
@@ -93,7 +105,8 @@ export default function MangaScript() {
 
   const handleDisconnectDrive = async () => {
     try {
-      await fetch('/api/auth/google/disconnect', { method: 'POST' });
+      localStorage.removeItem('google_tokens');
+      await fetch('/api/auth/google/disconnect', { method: 'POST', credentials: 'include' });
       setIsDriveConnected(false);
       addLog("Google Drive disconnected", "warning");
     } catch (e) {
@@ -232,10 +245,16 @@ export default function MangaScript() {
       addLog(`Parsing EPUB structure...`, 'system');
       const formData = new FormData();
       formData.append('file', file);
+      
+      const tokens = localStorage.getItem('google_tokens');
+      if (tokens) {
+        formData.append('googleTokens', tokens);
+      }
 
       const response = await fetch('/api/mangascript/parse', {
         method: 'POST',
-        body: formData
+        body: formData,
+        credentials: 'include'
       });
 
       if (!response.ok) {
